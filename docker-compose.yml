@@ -1,0 +1,125 @@
+name: patient-care-assistant
+
+services:
+
+  # -------------------------
+  # PATIENT DATABASE
+  # -------------------------
+  patient-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: patient_user
+      POSTGRES_PASSWORD: ${PATIENT_DB_PASSWORD}
+      POSTGRES_DB: patient_care_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - patient_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U patient_user -d patient_care_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # -------------------------
+  # NOTIFICATION DATABASE
+  # -------------------------
+  notification-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      POSTGRES_DB: notification_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U notification_user -d notification_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # -------------------------
+  # MAIL TESTING
+  # -------------------------
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    platform: linux/amd64
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    restart: unless-stopped
+
+  # -------------------------
+  # NOTIFICATION DOCUMENT API
+  # -------------------------
+  notification-api:
+    build:
+      context: ./notification_document
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./notification_document/.env
+    environment:
+      NOTIFICATION_DATABASE_URL: postgresql://notification_user:${NOTIFICATION_DB_PASSWORD}@notification-db:5432/notification_db
+      PATIENT_MANAGEMENT_API_URL: http://patient-api:8000
+
+      # MailHog configuration
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_USE_TLS: "false"
+
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+      patient-api:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped
+
+  # -------------------------
+  # PATIENT MANAGEMENT API
+  # -------------------------
+  patient-api:
+    build:
+      context: ./patient_management
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./patient_management/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://patient_user:${PATIENT_DB_PASSWORD}@patient-db:5432/patient_care_db
+      NOTIFICATION_SERVICE_URL: http://notification-api:8001
+    depends_on:
+      patient-db:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  patient_db_data:
+    # Reuse the original project volume so existing patient accounts and
+    # clinical records remain available after the Compose project rename.
+    external: true
+    name: patient_care_assistant_patient_db_data
+  notification_db_data:

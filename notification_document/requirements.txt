@@ -1,0 +1,9 @@
+
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+httpx
+APScheduler>=3.10,<4
+reportlab
