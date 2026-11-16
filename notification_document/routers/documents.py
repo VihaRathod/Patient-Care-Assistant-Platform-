@@ -2,12 +2,10 @@
 # routers/documents.py
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
 from pathlib import Path
 from services.email_service import send_visit_summary_email
 import smtplib
 import httpx
-import traceback
 from services.pdf_service import (
     fetch_visit_summary_data,
     generate_visit_summary_pdf
@@ -16,6 +14,7 @@ from services.pdf_service import (
     fetch_prescription_data,
     generate_prescription_pdf
 )
+from services.s3_service import DocumentStorageError, upload_document
 
 router = APIRouter(
     prefix="/documents",
@@ -33,19 +32,21 @@ async def download_visit_summary(appointment_id: int):
         # Step 2: Generate PDF
         pdf_path = generate_visit_summary_pdf(visit_data)
 
-        # Step 3: Verify that PDF exists
+        # Step 3: Store the generated PDF privately in S3 and return a
+        # time-limited URL instead of returning patient data in this response.
         if not Path(pdf_path).is_file():
             raise HTTPException(
                 status_code=500,
                 detail="Visit summary PDF could not be generated"
             )
 
-        # Step 4: Return PDF as downloadable response
-        return FileResponse(
-            path=pdf_path,
-            media_type="application/pdf",
-            filename=f"visit_summary_{appointment_id}.pdf"
-        )
+        document = upload_document(pdf_path, "visit-summaries", appointment_id)
+
+        return {
+            "appointment_id": appointment_id,
+            "document_url": document.url,
+            "expires_in_seconds": document.expires_in_seconds,
+        }
 
     except HTTPException:
         raise
@@ -67,6 +68,12 @@ async def download_visit_summary(appointment_id: int):
         raise HTTPException(
             status_code=503,
             detail="Unable to connect to Patient Management service"
+        )
+
+    except DocumentStorageError:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to store visit summary in document storage"
         )
 
     except Exception:
@@ -95,12 +102,13 @@ async def download_prescription(prescription_id: int):
                 detail="Prescription PDF could not be generated"
             )
 
-        # Download PDF
-        return FileResponse(
-            path=pdf_path,
-            media_type="application/pdf",
-            filename=f"prescription_{prescription_id}.pdf"
-        )
+        document = upload_document(pdf_path, "prescriptions", prescription_id)
+
+        return {
+            "prescription_id": prescription_id,
+            "document_url": document.url,
+            "expires_in_seconds": document.expires_in_seconds,
+        }
 
     except HTTPException:
         raise
@@ -124,13 +132,16 @@ async def download_prescription(prescription_id: int):
             detail="Unable to connect to Patient Management service"
         )
 
-    except Exception as e:
+    except DocumentStorageError:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to store prescription in document storage"
+        )
 
-        traceback.print_exc()
-
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate prescription PDF: {str(e)}"
+            detail="Failed to generate prescription PDF"
         )
 
 
@@ -154,7 +165,8 @@ async def email_visit_summary(appointment_id: int):
         # Step 2: Generate PDF
         pdf_path = generate_visit_summary_pdf(visit_data)
 
-        # Step 3: Send email with PDF attachment
+        # Step 3: Store the PDF and share its short-lived link by email.
+        document = upload_document(pdf_path, "visit-summaries", appointment_id)
         send_visit_summary_email(
             recipient_email=recipient_email,
             patient_name=visit_data.get("patient_name", "Patient"),
@@ -162,14 +174,16 @@ async def email_visit_summary(appointment_id: int):
             appointment_datetime=visit_data.get(
                 "appointment_datetime", ""
             ),
-            pdf_path=pdf_path
+            document_url=document.url,
+            link_expiry_seconds=document.expires_in_seconds,
         )
 
         return {
             "message": "Visit summary emailed successfully",
             "appointment_id": appointment_id,
             "recipient_email": recipient_email,
-            "attachment": Path(pdf_path).name
+            "document_url": document.url,
+            "expires_in_seconds": document.expires_in_seconds,
         }
 
     except HTTPException:
@@ -192,6 +206,12 @@ async def email_visit_summary(appointment_id: int):
         raise HTTPException(
             status_code=503,
             detail="Unable to connect to Patient Management service"
+        )
+
+    except DocumentStorageError:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to store visit summary in document storage"
         )
 
     except (smtplib.SMTPException, OSError):

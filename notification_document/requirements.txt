@@ -7,3 +7,5 @@ python-dotenv
 httpx
 APScheduler>=3.10,<4
 reportlab
+boto3
+awscrt

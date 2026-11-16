@@ -2,7 +2,6 @@
 import smtplib
 
 from email.message import EmailMessage
-from pathlib import Path
 from config.settings import settings
 
 
@@ -68,15 +67,9 @@ def send_visit_summary_email(
     patient_name: str,
     provider_name: str,
     appointment_datetime: str,
-    pdf_path: str
+    document_url: str,
+    link_expiry_seconds: int,
 ):
-
-    file_path = Path(pdf_path)
-
-    if not file_path.is_file():
-        raise FileNotFoundError(
-            f"Visit summary PDF not found: {file_path}"
-        )
 
     message = EmailMessage()
 
@@ -89,7 +82,10 @@ Hello {patient_name},
 
 Thank you for visiting Patient Care.
 
-Your visit summary is attached to this email as a PDF document.
+Use the secure link below to download your visit summary PDF. The link expires
+in {link_expiry_seconds // 60} minutes:
+
+{document_url}
 
 Appointment Details:
 
@@ -103,16 +99,6 @@ Patient Care Team
 """
 
     message.set_content(body)
-
-    # Attach generated PDF
-    with open(file_path, "rb") as pdf_file:
-
-        message.add_attachment(
-            pdf_file.read(),
-            maintype="application",
-            subtype="pdf",
-            filename=file_path.name
-        )
 
     # Send email using existing SMTP configuration
     with smtplib.SMTP(
