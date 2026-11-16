@@ -7,13 +7,11 @@ from dependencies.auth import require_roles
 
 from models.user import User
 from schemas.provider import (
-    ProviderCreate,
     ProviderUpdate,
     ProviderResponse
 )
 
 from services.provider_service import (
-    create_provider,
     get_all_providers,
     get_provider_by_id,
     get_provider_by_user_id,
@@ -29,25 +27,6 @@ router = APIRouter(
     prefix="/providers",
     tags=["Providers"]
 )
-
-
-# Admin creates a provider profile
-@router.post(
-    "/",
-    response_model=ProviderResponse,
-    status_code=201
-)
-def add_provider(
-    provider_data: ProviderCreate,
-    current_user: User = Depends(
-        require_roles("ADMIN")
-    ),
-    db: Session = Depends(get_db)
-):
-    return create_provider(
-        db,
-        provider_data.model_dump()
-    )
 
 
 # View all active providers
